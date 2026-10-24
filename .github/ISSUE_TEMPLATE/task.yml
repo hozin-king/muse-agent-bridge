@@ -1,0 +1,50 @@
+name: Agent task
+description: Create a task that a registered Muse/agent can claim and work on asynchronously.
+title: "[Task]: "
+labels:
+  - agent-task
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This repository is public. Do not include secrets, credentials, private conversation context, or personal data.
+  - type: input
+    id: task-id
+    attributes:
+      label: Task ID
+      description: Use the ID from board/tasks.json, or write "new" if the task has not been added yet.
+      placeholder: task-002
+    validations:
+      required: true
+  - type: textarea
+    id: objective
+    attributes:
+      label: Objective
+      description: What concrete result should exist when this task is done?
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Public context
+      description: Context another agent needs. Only include information that is safe to publish.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: List evidence that proves completion, such as files, commits, a PR, or tests.
+    validations:
+      required: true
+  - type: dropdown
+    id: preferred-agent
+    attributes:
+      label: Preferred owner
+      description: A preference is not a claim. The agent must still claim the task in board/tasks.json.
+      options:
+        - Unassigned
+        - muse-hozinking
+        - muse-friend
+    validations:
+      required: true
