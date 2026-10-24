@@ -22,15 +22,15 @@ async function ensureSchema(env) {
         env.DB.prepare(`CREATE TABLE IF NOT EXISTS agents (
           id TEXT PRIMARY KEY, display_name TEXT NOT NULL, token_hash TEXT,
           status TEXT NOT NULL DEFAULT 'unclaimed', created_at TEXT NOT NULL)`),
-        env.DB.prepare(`CREATE TABLE IF NOT EXISTS tasks (
+        env.DB.prepare(`CREATE TABLE IF NOT EXISTS bridge_tasks (
           id TEXT PRIMARY KEY, title TEXT NOT NULL, body TEXT NOT NULL DEFAULT '',
           status TEXT NOT NULL DEFAULT 'open', created_by TEXT NOT NULL,
           claimed_by TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`),
-        env.DB.prepare(`CREATE TABLE IF NOT EXISTS messages (
+        env.DB.prepare(`CREATE TABLE IF NOT EXISTS bridge_messages (
           id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL,
           from_agent TEXT NOT NULL, text TEXT NOT NULL, created_at TEXT NOT NULL)`),
-        env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`),
-        env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_messages_task ON messages(task_id, id)`),
+        env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_tasks_status ON bridge_tasks(status)`),
+        env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_messages_task ON bridge_messages(task_id, id)`),
       ]);
     })();
   }
@@ -137,34 +137,34 @@ async function listAgents(env) {
 
 async function listTasks(env, status = null) {
   const q = status
-    ? env.DB.prepare("SELECT * FROM tasks WHERE status = ? ORDER BY updated_at DESC").bind(status)
-    : env.DB.prepare("SELECT * FROM tasks ORDER BY updated_at DESC");
+    ? env.DB.prepare("SELECT * FROM bridge_tasks WHERE status = ? ORDER BY updated_at DESC").bind(status)
+    : env.DB.prepare("SELECT * FROM bridge_tasks ORDER BY updated_at DESC");
   const { results } = await q.all();
   return results;
 }
 
 async function getTask(env, id) {
-  return env.DB.prepare("SELECT * FROM tasks WHERE id = ?").bind(id).first();
+  return env.DB.prepare("SELECT * FROM bridge_tasks WHERE id = ?").bind(id).first();
 }
 
 async function listMessages(env, taskId, limit = 100) {
   const { results } = await env.DB.prepare(
-    "SELECT * FROM messages WHERE task_id = ? ORDER BY id ASC LIMIT ?"
+    "SELECT * FROM bridge_messages WHERE task_id = ? ORDER BY id ASC LIMIT ?"
   ).bind(taskId, limit).all();
   return results;
 }
 
 async function recentMessages(env, limit = 10) {
   const { results } = await env.DB.prepare(
-    `SELECT m.*, t.title AS task_title FROM messages m
-     JOIN tasks t ON t.id = m.task_id ORDER BY m.id DESC LIMIT ?`
+    `SELECT m.*, t.title AS task_title FROM bridge_messages m
+     JOIN bridge_tasks t ON t.id = m.task_id ORDER BY m.id DESC LIMIT ?`
   ).bind(limit).all();
   return results;
 }
 
 async function addMessage(env, taskId, fromAgent, text) {
   await env.DB.prepare(
-    "INSERT INTO messages (task_id, from_agent, text, created_at) VALUES (?, ?, ?, ?)"
+    "INSERT INTO bridge_messages (task_id, from_agent, text, created_at) VALUES (?, ?, ?, ?)"
   ).bind(taskId, fromAgent, text, nowIso()).run();
 }
 
@@ -172,7 +172,7 @@ async function createTask(env, { title, body, createdBy }) {
   const id = newTaskId();
   const ts = nowIso();
   await env.DB.prepare(
-    `INSERT INTO tasks (id, title, body, status, created_by, claimed_by, created_at, updated_at)
+    `INSERT INTO bridge_tasks (id, title, body, status, created_by, claimed_by, created_at, updated_at)
      VALUES (?, ?, ?, 'open', ?, NULL, ?, ?)`
   ).bind(id, title, body || "", createdBy, ts, ts).run();
   return getTask(env, id);
@@ -184,14 +184,14 @@ async function claimTask(env, task, agentId) {
     return { error: `Tugas sudah di-claim oleh ${task.claimed_by}.` };
   }
   await env.DB.prepare(
-    "UPDATE tasks SET status = 'claimed', claimed_by = ?, updated_at = ? WHERE id = ?"
+    "UPDATE bridge_tasks SET status = 'claimed', claimed_by = ?, updated_at = ? WHERE id = ?"
   ).bind(agentId, nowIso(), task.id).run();
   return { task: await getTask(env, task.id) };
 }
 
 async function doneTask(env, task) {
   await env.DB.prepare(
-    "UPDATE tasks SET status = 'done', updated_at = ? WHERE id = ?"
+    "UPDATE bridge_tasks SET status = 'done', updated_at = ? WHERE id = ?"
   ).bind(nowIso(), task.id).run();
   return getTask(env, task.id);
 }
@@ -199,7 +199,7 @@ async function doneTask(env, task) {
 async function setTaskStatus(env, task, status) {
   if (!["open", "claimed", "done"].includes(status)) return null;
   await env.DB.prepare(
-    "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?"
+    "UPDATE bridge_tasks SET status = ?, updated_at = ? WHERE id = ?"
   ).bind(status, nowIso(), task.id).run();
   return getTask(env, task.id);
 }
@@ -400,7 +400,7 @@ async function handleApi(request, env, url) {
       if (b.status) {
         updated = (await setTaskStatus(env, task, String(b.status))) || task;
       } else {
-        await env.DB.prepare("UPDATE tasks SET updated_at = ? WHERE id = ?").bind(nowIso(), task.id).run();
+        await env.DB.prepare("UPDATE bridge_tasks SET updated_at = ? WHERE id = ?").bind(nowIso(), task.id).run();
         updated = await getTask(env, task.id);
       }
       return json({ task: updated, messages: await listMessages(env, task.id) });

@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS agents (
   created_at TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS tasks (
+CREATE TABLE IF NOT EXISTS bridge_tasks (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
   body TEXT NOT NULL DEFAULT '',
@@ -21,13 +21,13 @@ CREATE TABLE IF NOT EXISTS tasks (
   updated_at TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS messages (
+CREATE TABLE IF NOT EXISTS bridge_messages (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  task_id TEXT NOT NULL REFERENCES tasks(id),
+  task_id TEXT NOT NULL REFERENCES bridge_tasks(id),
   from_agent TEXT NOT NULL,
   text TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
-CREATE INDEX IF NOT EXISTS idx_messages_task ON messages(task_id, id);
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON bridge_tasks(status);
+CREATE INDEX IF NOT EXISTS idx_messages_task ON bridge_messages(task_id, id);
