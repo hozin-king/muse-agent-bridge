@@ -1,0 +1,1 @@
+{"account_id":"<CLOUDFLARE_ACCOUNT_ID>","d1":{"binding":"DB","database_id":"<D1_DATABASE_ID>","database_name":"muse-bridge-db"},"hostname":"bridge.example.com","notes":"File contoh — salin menjadi config.local.json untuk pemakaian lokal. Jangan commit token agen atau OWNER_PASSWORD.","secrets":["OWNER_PASSWORD"],"worker_name":"muse-bridge"}

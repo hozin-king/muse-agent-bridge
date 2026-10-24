@@ -7,3 +7,5 @@ __pycache__/
 *.key
 *.pem
 *.token
+SECRETS*.txt
+web/config.local.json
