@@ -6,9 +6,12 @@
 //   "bridge tugas"  -> daftar tugas open (maks 10)
 //   "bridge buat <judul>" -> buat tugas di Bridge (butuh GATEWAY_TOKEN)
 //   "bridge bantu"  -> daftar perintah
-// Keamanan: hanya OWNER_JID yang dilayani. Pesan dari orang lain / grup diabaikan.
+// Keamanan: hanya OWNER_JID + ADMIN_JIDS yang dilayani. Pesan dari orang lain / grup diabaikan.
+// PERINGATAN PLUGIN: kode plugin jalan dengan hak penuh proses Node (bisa baca file & .env).
+// Hanya upload plugin yang kamu tulis sendiri / dari sumber yang kamu percayai penuh.
+// Jangan pernah upload plugin kiriman orang asing, meski dikirim ke nomor owner sekalipun.
 // Token & JID HANYA dari file .env lokal, TIDAK PERNAH di-commit (lihat .gitignore).
-import makeWASocket, { DisconnectReason, useMultiFileAuthState, fetchLatestBaileysVersion } from '@whiskeysockets/baileys';
+import makeWASocket, { DisconnectReason, useMultiFileAuthState, fetchLatestBaileysVersion, downloadMediaMessage } from '@whiskeysockets/baileys';
 import qrcode from 'qrcode-terminal';
 import pino from 'pino';
 import fs from 'node:fs';
@@ -16,6 +19,14 @@ import fs from 'node:fs';
 const BRIDGE_URL = (process.env.BRIDGE_URL || 'https://bridge.hozinking.my.id').replace(/\/$/, '');
 const TOKEN = process.env.GATEWAY_TOKEN || '';
 const OWNER_JID = process.env.OWNER_JID || ''; // contoh: 6281234567890@s.whatsapp.net
+const ADMIN_JIDS = (process.env.ADMIN_JIDS || '').split(',').map(s => s.trim()).filter(Boolean);
+const isAuthorized = (jid) => jid === OWNER_JID || ADMIN_JIDS.includes(jid);
+const MAX_PLUGIN_BYTES = 100 * 1024;
+function safePluginName(raw) {
+  const base = String(raw || '').split('/').pop().split('\\').pop();
+  if (!/^[A-Za-z0-9_-]+\.js$/.test(base)) return null;
+  return base;
+}
 const PAIRING_NUMBER = (process.env.PAIRING_NUMBER || '').replace(/\D/g, ''); // nomor bot kedua, tanpa +, contoh: 6281234567890. Kalau diisi, gateway memakai pairing code, bukan QR.
 const POLL_SECONDS = Number(process.env.POLL_SECONDS || 60);
 const SEEN_FILE = './seen.json';
@@ -27,6 +38,7 @@ let seen = loadJson(SEEN_FILE, {});
 let queue = loadJson(QUEUE_FILE, []);
 let sock = null;
 let pluginCommands = []; // { trigger, description, plugin, handler }
+let pluginFiles = new Set(); // file .js yang berhasil dimuat (punya minimal 1 perintah valid)
 
 // Plugin: file di ./plugins/*.js, masing-masing export default:
 //   { name: 'namaplugin', commands: [{ trigger: 'ping', description: '...',
@@ -36,11 +48,13 @@ let pluginCommands = []; // { trigger, description, plugin, handler }
 // Plugin yang gagal dimuat / salah format dilewati dengan peringatan, gateway tetap jalan.
 async function loadPlugins() {
   pluginCommands = [];
+  pluginFiles = new Set();
   let dir;
   try { dir = fs.readdirSync('./plugins'); } catch { return; }
   for (const file of dir.filter(f => f.endsWith('.js')).sort()) {
     try {
-      const mod = await import('./plugins/' + file);
+      // ?t= memaksa import ulang (bypass cache) agar upload / reload plugin langsung pakai kode baru.
+      const mod = await import('./plugins/' + file + '?t=' + Date.now());
       const plugin = mod.default || mod;
       if (!plugin || !Array.isArray(plugin.commands)) { console.log('Plugin dilewati (format salah): ' + file); continue; }
       for (const c of plugin.commands) {
@@ -48,6 +62,7 @@ async function loadPlugins() {
           pluginCommands.push({ trigger: String(c.trigger), description: c.description || '', plugin: plugin.name || file, handler: c.handler });
         }
       }
+      if (plugin.commands.some(c => c && c.trigger && typeof c.handler === 'function')) pluginFiles.add(file);
       console.log('Plugin dimuat: ' + (plugin.name || file) + ' (' + plugin.commands.map(c => c.trigger).join(', ') + ')');
     } catch (e) { console.log('Plugin gagal dimuat, dilewati: ' + file + ' — ' + e.message); }
   }
@@ -88,12 +103,57 @@ async function pollTasks() {
     await flushQueue();
   } catch (e) { console.log('Poll gagal (dicoba lagi siklus berikut):', e.message); }
 }
+// Upload plugin lewat WA: kirim file .js sebagai dokumen dari OWNER_JID / ADMIN_JIDS.
+// File disimpan ke ./plugins/, lalu dimuat ulang tanpa restart. Kalau format salah,
+// file dihapus lagi dan pengirim diberitahu — gateway tidak crash.
+async function handlePluginUpload(jid, m) {
+  const doc = m.message.documentMessage;
+  const name = safePluginName(doc.fileName);
+  if (!name) { await sendSafe(jid, 'Upload ditolak: file harus .js dengan nama aman (huruf, angka, _ , -).'); return; }
+  if (doc.fileLength && Number(doc.fileLength) > MAX_PLUGIN_BYTES) { await sendSafe(jid, 'Upload ditolak: plugin maks 100 KB.'); return; }
+  try {
+    const buf = await downloadMediaMessage(m, 'buffer', {}, { logger: pino({ level: 'silent' }) });
+    const code = Buffer.isBuffer(buf) ? buf.toString('utf8') : String(buf || '');
+    if (!code.trim() || Buffer.byteLength(code) > MAX_PLUGIN_BYTES) throw new Error('isi file kosong / terlalu besar');
+    fs.mkdirSync('./plugins', { recursive: true });
+    fs.writeFileSync('./plugins/' + name, code);
+    await loadPlugins();
+    if (!pluginFiles.has(name)) {
+      try { fs.unlinkSync('./plugins/' + name); } catch {}
+      await loadPlugins();
+      await sendSafe(jid, 'Plugin gagal dimuat (format salah, file dihapus lagi): ' + name + '\nFormat benar: export default { name, commands: [{ trigger, description, handler }] }');
+      return;
+    }
+    await sendSafe(jid, 'Plugin terpasang: ' + name + '\nPerintah aktif sekarang: ' + pluginCommands.map(c => c.trigger).join(', '));
+  } catch (e) {
+    try { fs.unlinkSync('./plugins/' + name); } catch {}
+    await sendSafe(jid, 'Upload plugin gagal: ' + e.message);
+  }
+}
 async function handleOwnerText(jid, text) {
   const cmd = text.trim();
   if (cmd === 'bridge bantu' || cmd === 'bridge help') {
     let msg = 'Perintah Bridge:\n- bridge status\n- bridge tugas\n- bridge buat <judul>\n- bridge bantu';
-    if (pluginCommands.length) msg += '\nPlugin:\n' + pluginCommands.map(c => `- ${c.trigger} — ${c.description}`).join('\n');
+    msg += '\nPlugin:\n- plugin list\n- plugin reload\n- plugin hapus <nama>\n- kirim file .js sebagai dokumen untuk upload plugin baru';
+    if (pluginCommands.length) msg += '\nPerintah plugin:\n' + pluginCommands.map(c => `- ${c.trigger} — ${c.description}`).join('\n');
     await sendSafe(jid, msg);
+    return;
+  }
+  if (cmd === 'plugin list') {
+    const files = (() => { try { return fs.readdirSync('./plugins').filter(f => f.endsWith('.js')).sort(); } catch { return []; } })();
+    await sendSafe(jid, files.length ? 'Plugin terpasang:\n' + files.join('\n') : 'Belum ada plugin.');
+    return;
+  }
+  if (cmd === 'plugin reload') {
+    await loadPlugins();
+    await sendSafe(jid, 'Plugin dimuat ulang: ' + (pluginCommands.length ? pluginCommands.map(c => c.trigger).join(', ') : '(tidak ada perintah)'));
+    return;
+  }
+  if (cmd.startsWith('plugin hapus ')) {
+    const name = safePluginName(cmd.slice('plugin hapus '.length).trim() + (cmd.slice('plugin hapus '.length).trim().endsWith('.js') ? '' : '.js'));
+    if (!name) { await sendSafe(jid, 'Nama plugin tidak valid. Contoh: plugin hapus cuaca'); return; }
+    try { fs.unlinkSync('./plugins/' + name); await loadPlugins(); await sendSafe(jid, 'Plugin dihapus: ' + name); }
+    catch { await sendSafe(jid, 'Plugin tidak ditemukan: ' + name); }
     return;
   }
   if (cmd === 'bridge status') {
@@ -171,9 +231,10 @@ async function start() {
     for (const m of messages) {
       if (m.key.fromMe || !m.message) continue;
       const jid = m.key.remoteJid || '';
-      if (jid !== OWNER_JID) continue; // hanya owner, abaikan orang lain & grup
+      if (!isAuthorized(jid)) continue; // hanya owner + admin, abaikan orang lain & grup
+      if (m.message.documentMessage) { await handlePluginUpload(jid, m); continue; }
       const text = m.message.conversation || m.message.extendedTextMessage?.text || '';
-      if (text.trim().startsWith('bridge ')) await handleOwnerText(jid, text);
+      if (text.trim()) await handleOwnerText(jid, text);
     }
   });
 }
