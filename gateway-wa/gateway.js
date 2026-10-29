@@ -26,6 +26,32 @@ function saveJson(path, data) { fs.writeFileSync(path, JSON.stringify(data, null
 let seen = loadJson(SEEN_FILE, {});
 let queue = loadJson(QUEUE_FILE, []);
 let sock = null;
+let pluginCommands = []; // { trigger, description, plugin, handler }
+
+// Plugin: file di ./plugins/*.js, masing-masing export default:
+//   { name: 'namaplugin', commands: [{ trigger: 'ping', description: '...',
+//       handler: async (ctx) => ctx.reply('pong') }] }
+// ctx: { sock, jid, text, args, reply, bridge, sendSafe }
+// Plugin hanya dipanggil untuk OWNER_JID (filter sudah di messages.upsert).
+// Plugin yang gagal dimuat / salah format dilewati dengan peringatan, gateway tetap jalan.
+async function loadPlugins() {
+  pluginCommands = [];
+  let dir;
+  try { dir = fs.readdirSync('./plugins'); } catch { return; }
+  for (const file of dir.filter(f => f.endsWith('.js')).sort()) {
+    try {
+      const mod = await import('./plugins/' + file);
+      const plugin = mod.default || mod;
+      if (!plugin || !Array.isArray(plugin.commands)) { console.log('Plugin dilewati (format salah): ' + file); continue; }
+      for (const c of plugin.commands) {
+        if (c && c.trigger && typeof c.handler === 'function') {
+          pluginCommands.push({ trigger: String(c.trigger), description: c.description || '', plugin: plugin.name || file, handler: c.handler });
+        }
+      }
+      console.log('Plugin dimuat: ' + (plugin.name || file) + ' (' + plugin.commands.map(c => c.trigger).join(', ') + ')');
+    } catch (e) { console.log('Plugin gagal dimuat, dilewati: ' + file + ' — ' + e.message); }
+  }
+}
 
 async function bridge(path, method = 'GET', body = null) {
   if (!TOKEN) throw new Error('GATEWAY_TOKEN belum di-set di .env');
@@ -65,7 +91,9 @@ async function pollTasks() {
 async function handleOwnerText(jid, text) {
   const cmd = text.trim();
   if (cmd === 'bridge bantu' || cmd === 'bridge help') {
-    await sendSafe(jid, 'Perintah Bridge:\n- bridge status\n- bridge tugas\n- bridge buat <judul>\n- bridge bantu');
+    let msg = 'Perintah Bridge:\n- bridge status\n- bridge tugas\n- bridge buat <judul>\n- bridge bantu';
+    if (pluginCommands.length) msg += '\nPlugin:\n' + pluginCommands.map(c => `- ${c.trigger} — ${c.description}`).join('\n');
+    await sendSafe(jid, msg);
     return;
   }
   if (cmd === 'bridge status') {
@@ -96,9 +124,22 @@ async function handleOwnerText(jid, text) {
     } catch (e) { await sendSafe(jid, 'Gagal buat tugas: ' + e.message); }
     return;
   }
-  // Pesan lain dari owner: jangan dibalas otomatis (hindari spam / loop).
+  // Pesan lain dari owner: coba plugin dulu (trigger = kata pertama, mis. "ping").
+  // Plugin tidak perlu prefix "bridge ". Kalau tidak ada plugin yang cocok, diam saja (hindari spam / loop).
+  const firstWord = cmd.split(/\s+/)[0];
+  const pluginCmd = pluginCommands.find(c => c.trigger === firstWord);
+  if (pluginCmd) {
+    try {
+      await pluginCmd.handler({
+        sock, jid, text: cmd, args: cmd.slice(firstWord.length).trim(),
+        reply: (t) => sendSafe(jid, t), bridge, sendSafe,
+      });
+    } catch (e) { await sendSafe(jid, 'Plugin ' + pluginCmd.plugin + ' gagal: ' + e.message); }
+    return;
+  }
 }
 async function start() {
+  await loadPlugins();
   if (!OWNER_JID) console.log('PERINGATAN: OWNER_JID kosong — gateway hanya akan pairing, tidak membalas siapa pun sampai .env diisi.');
   if (!TOKEN) console.log('PERINGATAN: GATEWAY_TOKEN kosong — perintah Bridge akan gagal sampai token agen gateway dibuat di Bridge dan diisi di .env.');
   const { state, saveCreds } = await useMultiFileAuthState('./auth');

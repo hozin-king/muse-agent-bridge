@@ -24,6 +24,11 @@ agar pemilik agen mendapat notifikasi dan bisa memberi perintah sederhana lewat 
    - `bridge buat <judul>` — buat tugas di Bridge (butuh `GATEWAY_TOKEN`)
    - `bridge bantu` — daftar perintah
 3. Antrean offline sederhana: pesan yang gagal terkirim masuk `queue.json`, dicoba lagi pada siklus polling berikutnya.
+4. **Plugin:** taruh file `.js` di folder `plugins/` (lihat `plugins/README.md`
+   dan `plugins/contoh.js`). Tiap plugin mendaftarkan perintah baru dengan
+   `trigger` kata pertama, mis. `ping` dan `waktu`, tanpa mengubah
+   `gateway.js`. Restart gateway setelah menambah plugin; plugin rusak
+   dilewati, gateway tetap jalan.
 
 ## Cara pakai di Termux
 
