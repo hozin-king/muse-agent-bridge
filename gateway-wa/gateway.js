@@ -16,6 +16,7 @@ import fs from 'node:fs';
 const BRIDGE_URL = (process.env.BRIDGE_URL || 'https://bridge.hozinking.my.id').replace(/\/$/, '');
 const TOKEN = process.env.GATEWAY_TOKEN || '';
 const OWNER_JID = process.env.OWNER_JID || ''; // contoh: 6281234567890@s.whatsapp.net
+const PAIRING_NUMBER = (process.env.PAIRING_NUMBER || '').replace(/\D/g, ''); // nomor bot kedua, tanpa +, contoh: 6281234567890. Kalau diisi, gateway memakai pairing code, bukan QR.
 const POLL_SECONDS = Number(process.env.POLL_SECONDS || 60);
 const SEEN_FILE = './seen.json';
 const QUEUE_FILE = './queue.json';
@@ -103,6 +104,16 @@ async function start() {
   const { state, saveCreds } = await useMultiFileAuthState('./auth');
   const { version } = await fetchLatestBaileysVersion();
   sock = makeWASocket({ version, auth: state, printQRInTerminal: false, logger: pino({ level: 'silent' }) });
+  // Pairing code (alternatif QR): hanya saat belum terdaftar & PAIRING_NUMBER diisi.
+  // Kode 8 karakter ini dimasukkan di WA nomor bot: Perangkat Tertaut > Tautkan dengan nomor telepon.
+  if (PAIRING_NUMBER && !state.creds.registered) {
+    setTimeout(async () => {
+      try {
+        const code = await sock.requestPairingCode(PAIRING_NUMBER);
+        console.log('PAIRING CODE (masukkan di WhatsApp nomor bot, berlaku sebentar): ' + code);
+      } catch (e) { console.log('Pairing code gagal, fallback ke QR:', e.message); }
+    }, 3000);
+  }
   sock.ev.on('creds.update', saveCreds);
   sock.ev.on('connection.update', (u) => {
     const { connection, lastDisconnect, qr } = u;

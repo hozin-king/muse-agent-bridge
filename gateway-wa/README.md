@@ -36,8 +36,13 @@ cp .env.example .env
 # isi .env: BRIDGE_URL, GATEWAY_TOKEN, OWNER_JID (format 628xx@s.whatsapp.net), POLL_SECONDS
 npm install
 node gateway.js
-# 3. Scan QR yang muncul di terminal dengan WhatsApp nomor kedua:
-#    WhatsApp > Perangkat Tertaut > Tautkan Perangkat
+# 3a. Cara QR: scan QR yang muncul di terminal dengan WhatsApp nomor kedua:
+#     WhatsApp > Perangkat Tertaut > Tautkan Perangkat
+# 3b. Cara pairing code (alternatif QR, tanpa scan kamera):
+#     isi PAIRING_NUMBER di .env dengan nomor bot kedua (tanpa +),
+#     jalankan node gateway.js, salin kode 8 karakter yang muncul di terminal,
+#     lalu di WA nomor bot: Perangkat Tertaut > Tautkan dengan nomor telepon > masukkan kode itu.
+#     Kode berlaku sebentar — kalau kedaluwarsa, jalankan ulang gateway untuk kode baru.
 # 4. Dari nomor owner, kirim: bridge bantu
 ```
 
