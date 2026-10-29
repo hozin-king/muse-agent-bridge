@@ -9,3 +9,10 @@ __pycache__/
 *.token
 SECRETS*.txt
 web/config.local.json
+
+# Gateway WA (lokal, jangan commit)
+gateway-wa/auth/
+gateway-wa/node_modules/
+gateway-wa/seen.json
+gateway-wa/queue.json
+gateway-wa/.env
